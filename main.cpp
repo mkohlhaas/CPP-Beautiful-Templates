@@ -1,5 +1,8 @@
+#include <array>
 #include <iostream>
+#include <iterator>
 #include <type_traits>
+#include <vector>
 
 // Kind of Template | Type deduction | Full specialization allowed ? | Partial specialization allowed ? |
 // -----------------+----------------+-------------------------------+-----------------------------------
@@ -146,8 +149,10 @@ namespace template_auto
     };
 } // namespace template_auto
 
-namespace overloaded_functions
+namespace variadic_function_templates
 {
+    // Variadic function templates
+
     // Overloaded functions. Template functions cannot be partially specialized!
 
     template <typename T>
@@ -164,13 +169,148 @@ namespace overloaded_functions
         return a < b ? a : b;
     }
 
-    template <typename T, typename... Ts> // template parameter pack -> (T1, T2, T3, ...)
+    template <typename T, typename... Ts> // T1, T2, T3, ...
     T
-    min(T a, Ts... as)                    // function parameter pack -> (T1 a1, T2 a2, T3, a3, ...)
+    min(T a, Ts... as)                    // T1 a1, T2 a2, T3, a3, ...
     {
-        return min(a, min(as...));        // parameter pack expansion -> a1, a2, a3, ...
+        return min(a, min(as...));        // a1, a2, a3, ...
     }
-} // namespace overloaded_functions
+} // namespace variadic_function_templates
+
+namespace type_sizes
+{
+    template <typename... Ts>
+    auto
+    get_type_sizes()
+    {
+        // sizeof...(Ts) = number of elements in Ts
+        // sizeof(Ts)... = sizeof T1, sizeof T2, sizeof T3, ...
+        return std::array<std::size_t, sizeof...(Ts)>{sizeof(Ts)...};
+
+        // return std::array{sizeof(Ts)...}; // same
+    }
+} // namespace type_sizes
+
+namespace summation
+{
+    template <typename... Ts>
+    std::common_type_t<Ts...>
+    sum(Ts... args)
+    {
+        return (... + args); // unary left fold
+    }
+} // namespace summation
+
+namespace tuple_template
+{
+    // primary
+    template <typename T, typename... Ts>
+    struct tuple
+    {
+        tuple(T const &t, Ts const &...ts) : value(t), rest(ts...)
+        {
+        }
+
+        constexpr int
+        size() const
+        {
+            return 1 + rest.size();
+        }
+
+        T            value;
+        tuple<Ts...> rest;
+    };
+
+    // partial specialization
+    template <typename T>
+    struct tuple<T>
+    {
+        tuple(const T &t) : value(t)
+        {
+        }
+
+        constexpr int
+        size() const
+        {
+            return 1;
+        }
+
+        T value;
+    };
+
+    // primary
+    template <size_t N, typename T, typename... Ts>
+    struct nth_type : nth_type<N - 1, Ts...> // recursive inheritance
+    {
+        static_assert(N < sizeof...(Ts) + 1, "index out of bounds");
+    };
+
+    // partial specialization
+    template <typename T, typename... Ts>
+    struct nth_type<0, T, Ts...>
+    {
+        using value_type = T;
+    };
+
+    template <size_t N, typename... Ts>
+    using nth_type_t = nth_type<N, Ts...>::value_type;
+
+    // primary
+    template <size_t N>
+    struct getter
+    {
+        template <typename... Ts>
+        static nth_type_t<N, Ts...> &
+        get(tuple<Ts...> &t)
+        {
+            return getter<N - 1>::get(t.rest);
+        }
+    };
+
+    // explicit specialization
+    template <>
+    struct getter<0>
+    {
+        template <typename T, typename... Ts>
+        static T &
+        get(tuple<T, Ts...> &t)
+        {
+            return t.value;
+        }
+    };
+
+    // API
+    template <size_t N, typename... Ts>
+    nth_type_t<N, Ts...> &
+    get(tuple<Ts...> &t)
+    {
+        return getter<N>::get(t);
+    }
+} // namespace tuple_template
+
+namespace fold_expressions
+{
+    template <typename... T>
+    void
+    print1(T... args)
+    {
+        (..., (std::cout << args)) << '\n'; // comma operator
+    }
+
+    template <typename... T>
+    void
+    print2(T... args)
+    {
+        (std::cout << ... << args) << '\n'; // binary left fold (init expression = std::cout)
+    }
+
+    template <typename T, typename... Args>
+    void
+    push_back_many(std::vector<T> &v, Args &&...args)
+    {
+        (..., v.push_back(args));
+    }
+} // namespace fold_expressions
 
 int
 main()
@@ -259,5 +399,72 @@ main()
         std::cout << v1 << std::endl; // 42
         std::cout << v2 << std::endl; // 42
         std::cout << v3 << std::endl; // 42
+    }
+
+    {
+        using namespace variadic_function_templates;
+
+        std::cout << "\n=== Variadic Function Templates ===\n" << std::endl;
+
+        std::cout << min(7.5) << std::endl;            // 7.5
+        std::cout << min(42.0, 7.5) << std::endl;      // 7.5
+        std::cout << min(1, 5, 3, -4, 9) << std::endl; // -4
+    }
+
+    {
+        using namespace type_sizes;
+
+        std::cout << "\n=== sizeof() & Templates ===\n" << std::endl;
+
+        auto sizes = get_type_sizes<short, int, long, long long>();
+
+        for (auto const s : sizes)
+        {
+            std::cout << s << std::endl; // 2 4 8 8
+        }
+    }
+
+    {
+        using namespace summation;
+
+        std::cout << "\n=== Fold Expressions ===\n" << std::endl;
+
+        // Four types of folds: (op is a binary operator)
+        // unary  right fold (E op ...)      -> (E1 op (... op (EN-1 op EN)))
+        // unary  left  fold (... op E)      -> (((E1 op E2) op ...) op EN)
+        // binary right fold (E op ... op I) -> (E1 op (... op (EN−1 op (EN op I))))
+        // binary left  fold (I op ... op E) -> ((((I op E1) op E2) op ...) op EN)
+
+        int n = sum(1, 2, 3, 4, 5);
+
+        std::cout << n << std::endl; // 15
+    }
+
+    {
+        using namespace tuple_template;
+
+        std::cout << "\n=== Tuples ===\n" << std::endl;
+
+        tuple one(42);
+        tuple two(42, 42.5);
+        tuple three(42, 42.5, 'a');
+
+        std::cout << get<0>(one) << std::endl;                                                   // 42
+        std::cout << get<0>(two) << " " << get<1>(two) << std::endl;                             // 42 42.5
+        std::cout << get<0>(three) << " " << get<1>(three) << " " << get<2>(three) << std::endl; // 42 42.5 a
+    }
+
+    {
+        using namespace fold_expressions;
+
+        std::cout << "\n=== Fold Expressions ===\n" << std::endl;
+
+        print1('d', 'o', 'g'); // dog
+        print2('d', 'o', 'g'); // dog
+
+        std::vector<int> v;
+        push_back_many(v, 1, 2, 3, 4, 5);
+
+        std::copy(v.begin(), v.end(), std::ostream_iterator<int>(std::cout, " ")); // 1 2 3 4 5
     }
 }
