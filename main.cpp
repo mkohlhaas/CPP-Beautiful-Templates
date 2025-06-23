@@ -1,8 +1,35 @@
 #include <array>
+#include <cxxabi.h>
 #include <iostream>
 #include <iterator>
+#include <ostream>
+#include <print>
 #include <type_traits>
 #include <vector>
+
+#pragma GCC diagnostic ignored "-Wunused"
+
+std::string
+demangle(const char *mangled_name)
+{
+    std::string result;
+    std::size_t len    = 0;
+    int         status = 0;
+    char       *ptr    = __cxxabiv1::__cxa_demangle(mangled_name, nullptr, &len, &status);
+
+    if (status == 0)
+    {
+        result = ptr;
+    }
+    else
+    {
+        result = "demangle error";
+    }
+
+    ::free(ptr);
+
+    return result;
+}
 
 // Kind of Template | Type deduction | Full specialization allowed ? | Partial specialization allowed ? |
 // -----------------+----------------+-------------------------------+-----------------------------------
@@ -372,6 +399,181 @@ namespace factorial_constexpr
     }
 } // namespace factorial_constexpr
 
+namespace enable_if_template
+{
+    // widget (uses write())
+
+    struct widget
+    {
+        int         id;
+        std::string name;
+
+        std::ostream &
+        write(std::ostream &os) const
+        {
+            os << id << ',' << name << '\n';
+            return os;
+        }
+    };
+
+    // gadget (uses ostream)
+
+    struct gadget
+    {
+        int         id;
+        std::string name;
+
+        friend std::ostream &operator<<(std::ostream &, gadget const &);
+    };
+
+    std::ostream &
+    operator<<(std::ostream &os, gadget const &g)
+    {
+        os << g.id << ',' << g.name << '\n';
+        return os;
+    }
+
+    // uses_write
+    // TODO: Should be part of widget, gadget (but this is about enable_if so we don't care).
+    // TODO: Class template with static member is a variable template.
+
+    template <typename T>
+    struct uses_write
+    {
+        static constexpr bool value = false;
+    };
+
+    template <>
+    struct uses_write<widget>
+    {
+        static constexpr bool value = true;
+    };
+
+    template <typename T>
+    inline constexpr bool uses_write_v = uses_write<T>::value;
+
+    // enable_if
+
+    template <bool B, typename T = void>
+    struct enable_if
+    {
+    };
+
+    // only for true we have a `type`
+    template <typename T>
+    struct enable_if<true, T>
+    {
+        using type = T;
+    };
+
+    template <bool B, typename T = void>
+    using enable_if_t = enable_if<B, T>::type;
+
+    // serialize
+
+    template <typename T, enable_if_t<uses_write_v<T>> * = nullptr>
+    void
+    serialize(std::ostream &os, T const &value)
+    {
+        value.write(os);
+    }
+
+    template <typename T, enable_if_t<not uses_write_v<T>> * = nullptr>
+    void
+    serialize(std::ostream &os, T const &value)
+    {
+        os << value;
+    }
+} // namespace enable_if_template
+
+namespace sfinae_error
+{
+    // char (*)[N % 2 == 0] either creates char (*)[true] = char(*)[1] or char (*)[false] = char(*)[0].
+    // The latter - array of size 0 - is a SFINAE error.
+    // See https://en.cppreference.com/w/cpp/language/sfinae (lists type errors that are SFINAE errors)
+
+    template <typename T, size_t N>
+    void
+    handle(T (&)[N], char (*)[N % 2 == 0] = nullptr) // accepts array with even number of elements
+    {
+        std::println("handle even array: {} elements", N);
+    }
+
+    template <typename T, size_t N>
+    void
+    handle(T (&)[N], char (*)[N % 2 == 1] = nullptr) // accepts array with odd number of elements
+    {
+        std::println("handle odd  array: {} elements", N);
+    }
+} // namespace sfinae_error
+
+namespace decltype_templates
+{
+    namespace
+    {
+        template <typename T>
+        struct foo
+        {
+            using foo_type = T;
+        };
+
+        template <typename T>
+        struct bar
+        {
+            using bar_type = T;
+        };
+
+        template <typename T>
+        struct dummy
+        {
+            using dummy_type = T;
+        };
+    } // namespace
+
+    namespace
+    {
+        template <typename T>
+        decltype(typename T::foo_type(), void()) // NOTE: comma operator
+        handle(T const &)
+        {
+            std::println("handle a foo");
+        }
+
+        template <typename T>
+        decltype(typename T::bar_type(), void()) // NOTE: comma operator
+        handle(T const &)
+        {
+            std::println("handle a bar");
+        }
+    } // namespace
+} // namespace decltype_templates
+
+namespace common_type
+{
+    namespace
+    {
+        template <typename, typename... Ts>
+        struct has_common_type : std::false_type
+        {
+        };
+
+        template <typename... Ts>
+        struct has_common_type<std::void_t<std::common_type_t<Ts...>>, Ts...> : std::true_type
+        {
+        };
+
+        template <typename... Ts>
+        constexpr bool has_common_type_v = sizeof...(Ts) < 2 || has_common_type<void, Ts...>::value;
+    } // namespace
+
+    template <typename... Ts, typename = std::enable_if_t<has_common_type_v<Ts...>>>
+    void
+    process(Ts &&...)
+    {
+        std::println("{}", demangle(typeid(std::common_type_t<Ts...>).name()));
+    }
+} // namespace common_type
+
 int
 main()
 {
@@ -582,5 +784,59 @@ main()
         std::cout << factorial(4) << std::endl;  // 24
         std::cout << factorial(5) << std::endl;  // 120
         std::cout << factorial(12) << std::endl; // 479001600
+    }
+
+    {
+        using namespace enable_if_template;
+
+        std::cout << "\n=== enable_if ===\n" << std::endl;
+
+        // 'constexpr if' is a compile-time version of the if-statement.
+        // The syntax for 'constexpr if' is 'if constexpr(condition)'.
+
+        widget w{1, "one"};
+
+        serialize(std::cout, w); // 1,one
+    }
+
+    {
+        using namespace sfinae_error;
+
+        std::cout << "\n=== SFINAE ===\n" << std::endl;
+
+        int arr2[]{1, 2, 3, 4};
+        handle(arr2); // handle even array: 4 elements
+
+        int arr1[]{1, 2, 3, 4, 5};
+        handle(arr1); // handle odd  array: 5 elements
+    }
+
+    {
+        using namespace decltype_templates;
+
+        std::cout << "\n=== decltype ===\n" << std::endl;
+
+        foo<bool>   b_foo;
+        bar<bool>   b_bar;
+        dummy<bool> b_dummy;
+
+        handle(b_foo); // handle a foo
+        handle(b_bar); // handle a bar
+
+        // handle(b_dummy); // error: doesn't have a foo_type or bar_type
+    }
+
+    {
+        using namespace common_type;
+
+        std::cout << "\n=== Common Type ===\n" << std::endl;
+
+        int a = 1;
+        process(a);           // int
+        process(1);           // int
+        process(1, 2, 3);     // int
+        process(1, 2.0, '3'); // double
+
+        // process(1, 2.0, "3"); // error
     }
 }
