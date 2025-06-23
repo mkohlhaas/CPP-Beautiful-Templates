@@ -330,7 +330,7 @@ namespace factorial_class_template
 
     // API
     template <unsigned int N>
-    inline constexpr unsigned int factorial_v = factorial<N>::value;
+    constexpr unsigned int factorial_v = factorial<N>::value;
 } // namespace factorial_class_template
 
 namespace factorial_variable_template
@@ -338,10 +338,10 @@ namespace factorial_variable_template
     // variable template (just syntactic sugar for class template with static member)
 
     template <unsigned int N>
-    inline constexpr unsigned int factorial = N * factorial<N - 1>;
+    constexpr unsigned int factorial = N * factorial<N - 1>;
 
     template <>
-    inline constexpr unsigned int factorial<0> = 1;
+    constexpr unsigned int factorial<0> = 1;
 } // namespace factorial_variable_template
 
 namespace factorial_function_template
