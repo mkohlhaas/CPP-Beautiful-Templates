@@ -312,6 +312,66 @@ namespace fold_expressions
     }
 } // namespace fold_expressions
 
+namespace factorial_class_template
+{
+    // class template (with static is )
+
+    template <unsigned int N>
+    struct factorial
+    {
+        static constexpr unsigned int value = N * factorial<N - 1>::value;
+    };
+
+    template <>
+    struct factorial<0>
+    {
+        static constexpr unsigned int value = 1;
+    };
+
+    // API
+    template <unsigned int N>
+    inline constexpr unsigned int factorial_v = factorial<N>::value;
+} // namespace factorial_class_template
+
+namespace factorial_variable_template
+{
+    // variable template (just syntactic sugar for class template with static member)
+
+    template <unsigned int N>
+    inline constexpr unsigned int factorial = N * factorial<N - 1>;
+
+    template <>
+    inline constexpr unsigned int factorial<0> = 1;
+} // namespace factorial_variable_template
+
+namespace factorial_function_template
+{
+    // function template
+
+    template <unsigned int n>
+    constexpr unsigned int
+    factorial()
+    {
+        return n * factorial<n - 1>();
+    }
+
+    template <>
+    constexpr unsigned int
+    factorial<0>()
+    {
+        return 1;
+    }
+} // namespace factorial_function_template
+
+namespace factorial_constexpr
+{
+    constexpr unsigned int
+    factorial(unsigned int const n)
+    {
+        return n > 1 ? n * factorial(n - 1) : 1;
+    }
+} // namespace factorial_constexpr
+
 int
 main()
 {
@@ -381,7 +441,7 @@ main()
         std::cout << "\n=== auto Templates ===\n" << std::endl;
 
         // each parameter is deduced independently
-        [[maybe_unused]] foo<42, 42.0, false, 'x'> myFoo;
+        foo<42, 42.0, false, 'x'> myFoo;
         myFoo.f(); // [with auto ...x = {42, 4.2e+1, false, 'x'}]
     }
 
@@ -466,5 +526,61 @@ main()
         push_back_many(v, 1, 2, 3, 4, 5);
 
         std::copy(v.begin(), v.end(), std::ostream_iterator<int>(std::cout, " ")); // 1 2 3 4 5
+    }
+
+    {
+        using namespace factorial_class_template;
+
+        std::cout << "\n\n=== Factorial Class Template ===\n" << std::endl;
+
+        std::cout << factorial_v<0> << std::endl;  // 1
+        std::cout << factorial_v<1> << std::endl;  // 1
+        std::cout << factorial_v<2> << std::endl;  // 2
+        std::cout << factorial_v<3> << std::endl;  // 6
+        std::cout << factorial_v<4> << std::endl;  // 24
+        std::cout << factorial_v<5> << std::endl;  // 120
+        std::cout << factorial_v<12> << std::endl; // 479001600
+    }
+
+    {
+        using namespace factorial_variable_template;
+
+        std::cout << "\n=== Factorial Variable Template ===\n" << std::endl;
+
+        std::cout << factorial<0> << std::endl;  // 1
+        std::cout << factorial<1> << std::endl;  // 1
+        std::cout << factorial<2> << std::endl;  // 2
+        std::cout << factorial<3> << std::endl;  // 6
+        std::cout << factorial<4> << std::endl;  // 24
+        std::cout << factorial<5> << std::endl;  // 120
+        std::cout << factorial<12> << std::endl; // 479001600
+    }
+
+    {
+        using namespace factorial_function_template;
+
+        std::cout << "\n=== Factorial Function Template ===\n" << std::endl;
+
+        std::cout << factorial<0>() << std::endl;  // 1
+        std::cout << factorial<1>() << std::endl;  // 1
+        std::cout << factorial<2>() << std::endl;  // 2
+        std::cout << factorial<3>() << std::endl;  // 6
+        std::cout << factorial<4>() << std::endl;  // 24
+        std::cout << factorial<5>() << std::endl;  // 120
+        std::cout << factorial<12>() << std::endl; // 479001600
+    }
+
+    {
+        using namespace factorial_constexpr;
+
+        std::cout << "\n=== Factorial Constexpr ===\n" << std::endl;
+
+        std::cout << factorial(0) << std::endl;  // 1
+        std::cout << factorial(1) << std::endl;  // 1
+        std::cout << factorial(2) << std::endl;  // 2
+        std::cout << factorial(3) << std::endl;  // 6
+        std::cout << factorial(4) << std::endl;  // 24
+        std::cout << factorial(5) << std::endl;  // 120
+        std::cout << factorial(12) << std::endl; // 479001600
     }
 }
