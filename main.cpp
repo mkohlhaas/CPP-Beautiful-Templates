@@ -4,10 +4,13 @@
 #include <iterator>
 #include <ostream>
 #include <print>
+#include <string>
 #include <type_traits>
 #include <vector>
 
-#pragma GCC diagnostic ignored "-Wunused"
+using namespace std::string_literals; // enables s-suffix for std::string literals
+
+// #pragma GCC diagnostic ignored "-Wunused"
 
 std::string
 demangle(const char *mangled_name)
@@ -574,6 +577,430 @@ namespace common_type
     }
 } // namespace common_type
 
+namespace constraints_concepts
+{
+    // A CONSTRAINT is a modern way to define requirements on template parameters.
+    // A CONSTRAINT is a predicate that evaluates to true or false at compile-time.
+    // A CONCEPT is a set of named constraints
+
+    namespace no_check
+    {
+        template <typename T>
+        T
+        add(T const a, T const b)
+        {
+            return a + b;
+        }
+    } // namespace no_check
+
+    namespace enable_if_check
+    {
+        template <typename T, typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+        T
+        add(T const a, T const b)
+        {
+            return a + b;
+        }
+    } // namespace enable_if_check
+
+    namespace static_assert_check
+    {
+        template <typename T>
+        T
+        add(T const a, T const b)
+        {
+            static_assert(std::is_arithmetic_v<T>, "Arithmetic type required");
+            return a + b;
+        }
+    } // namespace static_assert_check
+
+    namespace requires_check
+    {
+        // REQUIRES CLAUSE doesn't use curly braces.
+
+        template <typename T>
+            requires std::is_arithmetic_v<T>
+        T
+        add(T const a, T const b)
+        {
+            return a + b;
+        }
+    } // namespace requires_check
+
+    namespace requires_check_alternative
+    {
+        // the same, only different order (matter of personal taste)
+
+        template <typename T>
+        T
+        add(T const a, T const b)
+            requires std::is_arithmetic_v<T>
+        {
+            return a + b;
+        }
+    } // namespace requires_check_alternative
+
+    namespace concept_check
+    {
+        // REQUIRES EXPRESSION uses curly braces.
+        // A requires expression is a Boolean expression that can be used with a requires clause.
+
+        template <typename T>
+        concept arithmetic = requires { std::is_arithmetic_v<T>; };
+
+        template <arithmetic T> // used like a data type
+        T
+        add(T const a, T const b)
+        {
+            return a + b;
+        }
+    } // namespace concept_check
+
+    namespace concept_check_alternative
+    {
+        // simple requirement (doesn't use `requires` keyword)
+        template <typename T>
+        concept arithmetic = std::is_arithmetic_v<T>;
+
+        template <arithmetic T>
+        T
+        add(T const a, T const b)
+        {
+            return a + b;
+        }
+    } // namespace concept_check_alternative
+
+    namespace old_requirements_style
+    {
+        // old style
+        template <typename T, typename U = void>
+        struct is_container : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct is_container<T, std::void_t<typename T::value_type,               //
+                                           typename T::size_type,                //
+                                           typename T::allocator_type,           //
+                                           typename T::iterator,                 //
+                                           typename T::const_iterator,           //
+                                           decltype(std::declval<T>().size()),   //
+                                           decltype(std::declval<T>().begin()),  //
+                                           decltype(std::declval<T>().end()),    //
+                                           decltype(std::declval<T>().cbegin()), //
+                                           decltype(std::declval<T>().cend())>>  //
+            : std::true_type
+        {
+        };
+
+        template <typename T, typename U = void>
+        constexpr bool is_container_v = is_container<T, U>::value;
+    } // namespace old_requirements_style
+
+    namespace new_requirements_style
+    {
+        // NOTE: naming convention (`container` instead of `is_container` bc it's used like a data type)
+        template <typename T>
+        concept container = requires(T t) {
+            typename T::value_type;     // type requirement
+            typename T::size_type;      // ..
+            typename T::allocator_type; // ..
+            typename T::iterator;       // ..
+            typename T::const_iterator; // type requirement
+            t.size();                   // simple requirement
+            t.begin();                  // ..
+            t.end();                    // ..
+            t.cbegin();                 // ..
+            t.cend();                   // simple requirement
+        };
+
+        template <container C>
+        void
+        process(C &&)
+        {
+            // ...
+        }
+    } // namespace new_requirements_style
+} // namespace constraints_concepts
+
+namespace simple_requirements
+{
+    // syntax: requires (parameter-list) { requirement-seq }
+
+    template <typename T>
+    concept arithmetic = requires { std::is_arithmetic_v<T>; };
+
+    template <typename T>
+    concept arithmetic_alt = std::is_arithmetic_v<T>; // empty parameter list can be omitted
+
+    template <typename T>
+    concept addable = requires(T a, T b) { a + b; };
+
+    template <typename T>
+    concept logger = requires(T t) {
+        t.error("just"); // takes a single parameter of `const char*` or some type that can be constructed from it
+        t.warning("a");  // the actual values passed as arguments have no importance (they are never performed)
+        t.info("demo");  // they are only checked for type correctness
+    };
+
+    template <logger Logger>
+    void
+    log_error(Logger &l)
+    {
+        l.error("error");
+        l.warning("warning");
+        l.info("info");
+    }
+
+    struct console_logger
+    {
+        void
+        error(std::string_view msg)
+        {
+            std::cout << msg << std::endl;
+        }
+
+        void
+        warning(std::string_view msg)
+        {
+            std::cout << msg << std::endl;
+        }
+
+        void
+        info(std::string_view msg)
+        {
+            std::cout << msg << std::endl;
+        }
+    };
+} // namespace simple_requirements
+
+namespace compound_requirement
+{
+    namespace
+    {
+        template <typename T>
+        void
+        f(T) noexcept // doesn't throw errors
+        {
+            // ...
+        }
+
+        template <typename T>
+        void
+        g(T) // could throw errors
+        {
+            // ...
+        }
+    } // namespace
+
+    namespace
+    {
+        // We want to check an expression for exceptions and/or return types.
+        // Syntax: { expression } [noexcept] [-> type_constraint];
+        // (both `noexcept` and `type_constraint` are optional)
+
+        template <typename F, typename... Args>
+        concept NonThrowing = requires(F &&func, Args... args) {
+            { func(args...) } noexcept; // checking for noexcept specifier
+        };
+
+        template <typename F, typename... Args>
+            requires NonThrowing<F, Args...>
+        void
+        invoke(F &&func, Args... args)
+        {
+            func(args...);
+        }
+    } // namespace
+} // namespace compound_requirement
+
+namespace check_for_return_types
+{
+    // checking for return values (must be a type constraint; not the actual return type)
+
+    template <typename T>
+    concept timer = requires(T t) {
+        { t.start() } -> std::same_as<void>;            // start() returns void
+        { t.stop() } -> std::convertible_to<long long>; // stop() returns anything convertible to long long
+    };
+
+    struct timerA
+    {
+        void
+        start()
+        {
+            // ...
+        }
+
+        int
+        // long long
+        stop()
+        {
+            return 0;
+        }
+    };
+} // namespace check_for_return_types
+
+namespace nested_requirements
+{
+    // std::conjunction_v performs a logical AND on the sequence of traits.
+    template <typename T, typename... Ts>
+    inline constexpr bool are_same_v = std::conjunction_v<std::is_same<T, Ts>...>;
+
+    template <typename... T>
+    concept HomogenousRange = requires(T... t) { // `requires`
+        (... + t);                               // simple requirement (no `requires`)
+        requires are_same_v<T...>;               // nested requirement: `requires` inside `requires`
+        requires sizeof...(T) > 1;               // nested requirement: `requires` inside `requires`
+    };
+
+    template <typename... T>
+        requires HomogenousRange<T...>
+    auto
+    add(T &&...t)
+    {
+        return (... + t);
+    }
+} // namespace nested_requirements
+
+namespace composing_constraints_1
+{
+    // Composing constraints
+
+    // with && (conjunction) and || (disjunction); short-circuited
+
+    template <typename T>
+        requires std::is_integral_v<T> && std::is_signed_v<T>
+    T
+    decrement(T value)
+    {
+        return --value;
+    }
+} // namespace composing_constraints_1
+
+namespace composing_constraints_2
+{
+    template <typename T>
+    concept Integral = std::is_integral_v<T>;
+
+    template <typename T>
+    concept Signed = std::is_signed_v<T>;
+
+    template <typename T>
+    concept SignedIntegral = Integral<T> && Signed<T>;
+
+    template <SignedIntegral T>
+    T
+    decrement(T value)
+    {
+        return --value;
+    }
+} // namespace composing_constraints_2
+
+namespace constrain_template_parameter_packs
+{
+    // Conjunctions and disjunctions cannot be used to constrain template parameter packs.
+
+    template <typename... T>
+    //  requires std::is_integral_v<T> && ...  // error: this is not allowed
+        requires(std::is_integral_v<T> && ...) // now it's a fold expression of type-traits! (But: no short-circuiting!)
+    auto
+    add(T... args)
+    {
+        return (args + ...);
+    }
+} // namespace constrain_template_parameter_packs
+
+namespace concept_template_parameter_packs
+{
+    // we just give the thing a name (concept = named constraint)
+    template <typename T>
+    concept Integral = std::is_integral_v<T>; // RHS = boolean value
+
+    // and now it works
+    template <typename... T>
+        requires(Integral<T> && ...) // fold with concepts creates a conjunction (WITH short-circuiting!)
+    auto
+    add(T... args)
+    {
+        return (args + ...);
+    }
+} // namespace concept_template_parameter_packs
+
+namespace anonymous_concepts_1
+{
+    template <typename T>
+    concept addable = requires(T a, T b) { a + b; }; // requires expression
+
+    template <typename T>
+        requires addable<T>                          // requires clause with concept
+    auto
+    add(T a, T b)
+    {
+        return a + b;
+    }
+} // namespace anonymous_concepts_1
+
+namespace anonymous_concepts_2
+{
+    // confusing syntax (requires requires ...); prefer n637a
+
+    template <typename T>
+    //                "anonymous concept"
+    //           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        requires requires(T a, T b) { a + b; } // requires clause with requires expression
+    auto
+    add(T a, T b)
+    {
+        return a + b;
+    }
+} // namespace anonymous_concepts_2
+
+namespace abbreviated_function_template
+{
+    // In C++20 you can use the auto specifier in the function parameter list.
+    // This has the effect of transforming the function into a template function.
+    // Such a function using auto for function parameters is called an ABBREVIATED FUNCTION TEMPLATE.
+
+    // abbreviated function template
+    auto
+    add(auto a, auto b)
+    {
+        return a + b;
+    }
+} // namespace abbreviated_function_template
+
+namespace constrained_abbreviated_function_template
+{
+    // constrained abbreviated function template (using concepts)
+    auto
+    add(std::integral auto a, std::integral auto b)
+    {
+        return a + b;
+    }
+} // namespace constrained_abbreviated_function_template
+
+namespace constrained_abbreviated_variadic_function_template
+{
+    // constrained auto can also be used for variadic function templates
+
+    auto
+    add(std::integral auto... args)
+    {
+        return (args + ...);
+    }
+} // namespace constrained_abbreviated_variadic_function_template
+
+namespace constrained_auto_with_lambdas
+{
+    // constrained auto with generic lambdas (C++14)
+    auto sum = [](std::integral auto a, std::integral auto b) { return a + b; };
+
+    // constrained auto with templated lambdas (C++20)
+    auto twice = []<std::integral T>(T a) { return a + a; };
+
+} // namespace constrained_auto_with_lambdas
+
 int
 main()
 {
@@ -816,13 +1243,13 @@ main()
 
         std::cout << "\n=== decltype ===\n" << std::endl;
 
-        foo<bool>   b_foo;
-        bar<bool>   b_bar;
-        dummy<bool> b_dummy;
+        foo<bool> b_foo;
+        bar<bool> b_bar;
 
         handle(b_foo); // handle a foo
         handle(b_bar); // handle a bar
 
+        dummy<bool> b_dummy [[maybe_unused]];
         // handle(b_dummy); // error: doesn't have a foo_type or bar_type
     }
 
@@ -838,5 +1265,169 @@ main()
         process(1, 2.0, '3'); // double
 
         // process(1, 2.0, "3"); // error
+    }
+
+    {
+        using namespace constraints_concepts;
+
+        std::cout << "\n=== Parameter Checks ===\n" << std::endl;
+
+        std::cout << no_check::add(2, 4) << std::endl;                   // 6
+        std::cout << no_check::add("2"s, "4.0"s) << std::endl;           // 24.0 (Oops!)
+        std::cout << enable_if_check::add(2, 4) << std::endl;            // 6
+        std::cout << static_assert_check::add(2, 4) << std::endl;        // 6
+        std::cout << requires_check::add(2, 4) << std::endl;             // 6
+        std::cout << requires_check_alternative::add(2, 4) << std::endl; // 6
+
+        static_assert(old_requirements_style::is_container_v<std::vector<int>>);
+        static_assert(new_requirements_style::container<std::vector<int>>);
+
+        new_requirements_style::process(std::vector{1, 2, 3}); // Ok
+    }
+
+    {
+        using namespace simple_requirements;
+
+        std::cout << "\n=== Simple Requirements ===\n" << std::endl;
+
+        console_logger cl;
+        log_error(cl); // error | warning | info
+    }
+
+    {
+        using namespace compound_requirement;
+
+        std::cout << "\n=== Compound Requirements ===\n" << std::endl;
+
+        invoke(f<int>, 42);
+
+        // invoke(g<int>, 42); // error
+    }
+
+    {
+        using namespace check_for_return_types;
+
+        std::cout << "\n=== Check Return Types ===\n" << std::endl;
+
+        static_assert(timer<timerA>);
+    }
+
+    {
+        using namespace nested_requirements;
+
+        std::cout << "\n=== Nested Requirements ===\n" << std::endl;
+
+        static_assert(HomogenousRange<int, int>);
+        static_assert(HomogenousRange<int, int, int, int, int, int>);
+
+        static_assert(not HomogenousRange<int>);
+        static_assert(not HomogenousRange<int, double>);
+        static_assert(not HomogenousRange<float, double>);
+
+        std::println("{}", add(1, 2));     // 3
+        std::println("{}", add(1.0, 2.0)); // 3
+
+        // add(1);                         // error
+        // add(1, 2.0);                    // error
+        // add(1.0f, 2.0);                 // error
+    }
+
+    {
+        using namespace composing_constraints_1;
+
+        std::cout << "\n=== Composing Constraints 1 ===\n" << std::endl;
+
+        std::println("{}", decrement(5)); // 4
+
+        // std::println("{}", decrement("foo")); // error
+    }
+
+    {
+        using namespace composing_constraints_2;
+
+        std::cout << "\n=== Composing Constraints 2 ===\n" << std::endl;
+
+        std::println("{}", decrement(5)); // 4
+
+        // std::println("{}", decrement("foo")); // error
+    }
+
+    {
+        using namespace constrain_template_parameter_packs;
+
+        std::cout << "\n=== Constrain Template Parameter Packs ===\n" << std::endl;
+
+        std::println("{}", add(1, 2, 3));       // 6
+        std::println("{}", add(1, 2, 3, 4, 5)); // 15
+
+        // add(1, 42.0); // error
+    }
+    {
+        using namespace concept_template_parameter_packs;
+
+        std::cout << "\n=== Constrain Template Parameter Packs Using Concepts ===\n" << std::endl;
+
+        std::println("{}", add(1, 2, 3));       // 6
+        std::println("{}", add(1, 2, 3, 4, 5)); // 15
+
+        // add(1, 42.0); // error
+    }
+
+    {
+        using namespace anonymous_concepts_1;
+
+        std::cout << "\n=== Anonymous Concepts 1 ===\n" << std::endl;
+
+        std::println("{}", add(1, 2)); // 3
+    }
+
+    {
+        using namespace anonymous_concepts_2;
+
+        std::cout << "\n=== Anonymous Concepts 2 ===\n" << std::endl;
+
+        std::println("{}", add(1, 2)); // 3
+    }
+
+    {
+        using namespace abbreviated_function_template;
+
+        std::cout << "\n=== Abbreviated Function Template ===\n" << std::endl;
+
+        // no constraints
+        std::println("{}", add(4, 2));       // 6
+        std::println("{}", add(4.0, 2));     // 6
+        std::println("{}", add("4"s, "2"s)); // 42 (Oops!)
+    }
+
+    {
+        using namespace constrained_abbreviated_function_template;
+
+        std::cout << "\n=== Constrained Abbreviated Function Template ===\n" << std::endl;
+
+        std::println("{}", add(4, 2)); // 6
+
+        // std::println("{}", add(4.2, 0));     // error
+        // std::println("{}", add("4"s, "2"s)); // error
+    }
+
+    {
+        using namespace constrained_abbreviated_variadic_function_template;
+
+        std::cout << "\n=== Constrained Abbreviated Variadic Function Template ===\n" << std::endl;
+
+        std::println("{}", add(1, 2, 3)); // 6
+
+        // add(1.0, 2.0, 3.0);                  // error
+        // std::println("{}", add("4"s, "2"s)); // error
+    }
+
+    {
+        using namespace constrained_auto_with_lambdas;
+
+        std::cout << "\n=== Constrained Auto with Lambdas ===\n" << std::endl;
+
+        std::println("{}", sum(1, 2)); // 3
+        std::println("{}", twice(2));  // 4
     }
 }
