@@ -1,9 +1,12 @@
 #include <array>
+#include <atomic>
 #include <cxxabi.h>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <ostream>
 #include <print>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -34,6 +37,7 @@ demangle(const char *mangled_name)
     return result;
 }
 
+// -----------------+----------------+-------------------------------+-----------------------------------
 // Kind of Template | Type deduction | Full specialization allowed ? | Partial specialization allowed ? |
 // -----------------+----------------+-------------------------------+-----------------------------------
 //     Function     |     Yes        |            Yes                |             No                   |
@@ -453,7 +457,7 @@ namespace enable_if_template
     };
 
     template <typename T>
-    inline constexpr bool uses_write_v = uses_write<T>::value;
+    constexpr bool uses_write_v = uses_write<T>::value;
 
     // enable_if
 
@@ -845,7 +849,7 @@ namespace nested_requirements
 {
     // std::conjunction_v performs a logical AND on the sequence of traits.
     template <typename T, typename... Ts>
-    inline constexpr bool are_same_v = std::conjunction_v<std::is_same<T, Ts>...>;
+    constexpr bool are_same_v = std::conjunction_v<std::is_same<T, Ts>...>;
 
     template <typename... T>
     concept HomogenousRange = requires(T... t) { // `requires`
@@ -1000,6 +1004,422 @@ namespace constrained_auto_with_lambdas
     auto twice = []<std::integral T>(T a) { return a + a; };
 
 } // namespace constrained_auto_with_lambdas
+
+namespace crtp
+{
+    // The Curiously Recurring Template Pattern
+
+    // general form:
+    // A: X<A>
+
+    namespace
+    {
+        template <typename T>
+        struct Base
+        {
+            void
+            f()
+            {
+                // this->do_f();                // error: No member named 'do_f' in 'Base<T>'
+
+                // calling function in derived class
+                static_cast<T *>(this)->do_f(); // upcast to 'Derived *'
+            }
+        };
+
+        struct Derived : public Base<Derived>   // CRTP
+        {
+            void
+            do_f()
+            {
+                std::println("Derived::f()");
+            }
+        };
+    } // namespace
+
+    template <typename T>
+    void
+    process(Base<T> &b)
+    {
+        b.f();
+    }
+} // namespace crtp
+
+namespace limited_number
+{
+    namespace
+    {
+        // limiting number of instances of T to N
+        template <typename T, size_t N>
+        struct limited_instances
+        {
+            static std::atomic<size_t> count; // every instantiation has its own static count!
+
+            limited_instances()
+            {
+                if (count >= N)
+                {
+                    throw std::logic_error{"Too many instances"};
+                }
+                ++count;
+            }
+
+            ~limited_instances()
+            {
+                --count;
+            }
+        };
+
+        // init of non-const static data member
+        template <typename T, size_t N>
+        std::atomic<size_t> limited_instances<T, N>::count = 0;
+    } // namespace
+
+    namespace
+    {
+        struct excalibur : limited_instances<excalibur, 1>
+        {
+            // ...
+        };
+
+        struct book_of_magic : limited_instances<book_of_magic, 3>
+        {
+            // ...
+        };
+    } // namespace
+} // namespace limited_number
+
+namespace composite_pattern
+{
+    // Actually we make hero and hero_party both iterables so we can treat them the same and
+    // derive them from a common base class.
+    //
+    // hero       = iterable of exactly one element
+    // hero_party = iterable of multiple elements/heros (implemented as a std::vector)
+
+    template <typename T>
+    struct base
+    {
+        template <typename U>
+        void ally_with(U &other);
+    };
+
+    struct hero : base<hero>
+    {
+        hero(std::string_view n) : name(n)
+        {
+        }
+
+        // making hero into an iterable (for-range-loop capable)
+        hero *
+        begin()
+        {
+            return this;
+        }
+
+        hero *
+        end()
+        {
+            return this + 1; // there is only one hero in a hero ;-)
+        }
+
+      private:
+        std::string      name;
+        std::set<hero *> connections;
+
+        template <typename U>
+        friend struct base;
+
+        template <typename U>
+        friend std::ostream &operator<<(std::ostream &os, base<U> &object);
+    };
+
+    struct hero_party : std::vector<hero>, base<hero_party>
+    {
+    };
+
+    template <typename T>
+    template <typename U>
+    void
+    base<T>::ally_with(U &other)
+    {
+        for (hero &from : *static_cast<T *>(this)) // upcast base to hero or hero_party (this = base<T> *)
+        {
+            for (hero &to : other)                 // make connections to hero or heros
+            {
+                from.connections.insert(&to);
+                to.connections.insert(&from);
+            }
+        }
+    }
+
+    // print base (hero or hero_party)
+    template <typename T>
+    std::ostream &
+    operator<<(std::ostream &os, base<T> &object)
+    {
+        for (hero &obj : *static_cast<T *>(&object)) // upcast object to hero or hero_party (content is both hero(s))
+        {
+            for (hero *c : obj.connections)          // print hero's connections
+            {
+                os << obj.name << " -> [" << c->name << "]" << '\n';
+            }
+        }
+        return os;
+    }
+} // namespace composite_pattern
+
+namespace enable_shared_from_this_crtp
+{
+    // Helper type std::enabled_shared_from_this enables objects
+    // managed by a std::shared_ptr to generate more std::shared_ptr
+    // instances in a safe manner.
+
+    // The std::enable_shared_from_this class helps us create more shared_ptr
+    // objects from an existing one in a safe manner.
+    struct building : std::enable_shared_from_this<building>
+    {
+        // ...
+    };
+} // namespace enable_shared_from_this_crtp
+
+namespace typelists
+{
+    // Typelists
+
+    template <typename... Ts>
+    struct typelist
+    {
+    };
+
+    struct empty_type
+    {
+    };
+
+    // NOTE: typical namespace name for implementation details
+    namespace detail
+    {
+        // length
+
+        template <typename TL>
+        struct length;
+
+        template <template <typename...> typename TL, typename... Ts>
+        struct length<TL<Ts...>>
+        {
+            using type = std::integral_constant<std::size_t, sizeof...(Ts)>;
+        };
+
+        // front_type
+
+        template <typename TL>
+        struct front_type;
+
+        template <template <typename...> typename TL, typename T, typename... Ts>
+        struct front_type<TL<T, Ts...>>
+        {
+            using type = T;
+        };
+
+        template <template <typename...> typename TL>
+        struct front_type<TL<>>
+        {
+            using type = empty_type;
+        };
+
+        // back_type
+
+        template <typename TL>
+        struct back_type;
+
+        template <template <typename...> typename TL, typename T, typename... Ts>
+        struct back_type<TL<T, Ts...>>
+        {
+            using type = back_type<TL<Ts...>>::type;
+        };
+
+        template <template <typename...> typename TL, typename T>
+        struct back_type<TL<T>>
+        {
+            using type = T;
+        };
+
+        template <template <typename...> typename TL>
+        struct back_type<TL<>>
+        {
+            using type = empty_type;
+        };
+
+        // push_back
+
+        template <typename TL, typename T>
+        struct push_back_type;
+
+        template <template <typename...> typename TL, typename T, typename... Ts>
+        struct push_back_type<TL<Ts...>, T>
+        {
+            using type = TL<Ts..., T>;
+        };
+
+        // push_front
+
+        template <typename TL, typename T>
+        struct push_front_type;
+
+        template <template <typename...> typename TL, typename T, typename... Ts>
+        struct push_front_type<TL<Ts...>, T>
+        {
+            using type = TL<T, Ts...>;
+        };
+
+        // pop_front
+
+        template <typename TL>
+        struct pop_front_type;
+
+        template <template <typename...> typename TL, typename T, typename... Ts>
+        struct pop_front_type<TL<T, Ts...>>
+        {
+            using type = TL<Ts...>;
+        };
+
+        template <template <typename...> typename TL>
+        struct pop_front_type<TL<>>
+        {
+            using type = TL<>;
+        };
+
+        // pop_back
+
+        template <std::ptrdiff_t N, typename R, typename TL>
+        struct pop_back_type;
+
+        template <std::ptrdiff_t N, typename... Ts, typename U, typename... Us>
+        struct pop_back_type<N, typelist<Ts...>, typelist<U, Us...>>
+        {
+            using type = typename pop_back_type<N - 1, typelist<Ts..., U>, typelist<Us...>>::type;
+        };
+
+        template <typename... Ts, typename U, typename... Us>
+        struct pop_back_type<0, typelist<Ts...>, typelist<U, Us...>>
+        {
+            using type = typelist<Ts...>;
+        };
+
+        template <>
+        struct pop_back_type</**/ -1, typelist<>, typelist<>>
+        {
+            using type = typelist<>;
+        };
+
+        // at
+
+        template <std::size_t I, std::size_t N, typename TL>
+        struct at_type;
+
+        // counting N up to I
+        template <std::size_t I, std::size_t N, template <typename...> typename TL, typename T, typename... Ts>
+        struct at_type<I, N, TL<T, Ts...>>
+        {
+            using type = std::conditional_t<I == N, T, typename at_type<I, N + 1, TL<Ts...>>::type>;
+        };
+
+        // wrong index
+        template <std::size_t I, std::size_t N>
+        struct at_type<I, N, typelist<>>
+        {
+            using type = empty_type;
+        };
+    } // namespace detail
+
+    // length_t
+
+    template <typename TL>
+    using length_t = detail::length<TL>::type; // is an integral_constant (which has a value)
+
+    static_assert(length_t<typelist<int, double, char>>::value == 3);
+
+    // length_v
+
+    template <typename TL>
+    constexpr std::size_t length_v = length_t<TL>::value;
+
+    static_assert(length_v<typelist<int, double, char>> == 3);
+    static_assert(length_v<typelist<int, double>> == 2);
+    static_assert(length_v<typelist<int>> == 1);
+
+    // front_t
+
+    template <typename TL>
+    using front_t = detail::front_type<TL>::type;
+
+    static_assert(std::is_same_v<front_t<typelist<>>, empty_type>);
+    static_assert(std::is_same_v<front_t<typelist<int>>, int>);
+    static_assert(std::is_same_v<front_t<typelist<int, double, char>>, int>);
+
+    // back_t
+
+    template <typename TL>
+    using back_t = detail::back_type<TL>::type;
+
+    static_assert(std::is_same_v<back_t<typelist<>>, empty_type>);
+    static_assert(std::is_same_v<back_t<typelist<int>>, int>);
+    static_assert(std::is_same_v<back_t<typelist<int, double, char>>, char>);
+
+    // push_back_t
+
+    template <typename TL, typename T>
+    using push_back_t = detail::push_back_type<TL, T>::type;
+
+    static_assert(std::is_same_v<push_back_t<typelist<>, int>, typelist<int>>);
+    static_assert(std::is_same_v<push_back_t<typelist<char>, int>, typelist<char, int>>);
+    static_assert(std::is_same_v<push_back_t<typelist<double, char>, int>, typelist<double, char, int>>);
+
+    // push_front_t
+
+    template <typename TL, typename T>
+    using push_front_t = detail::push_front_type<TL, T>::type;
+
+    static_assert(std::is_same_v<push_front_t<typelist<>, int>, typelist<int>>);
+    static_assert(std::is_same_v<push_front_t<typelist<char>, int>, typelist<int, char>>);
+    static_assert(std::is_same_v<push_front_t<typelist<double, char>, int>, typelist<int, double, char>>);
+
+    // pop_front_t
+
+    template <typename TL>
+    using pop_front_t = detail::pop_front_type<TL>::type;
+
+    static_assert(std::is_same_v<pop_front_t<typelist<>>, typelist<>>);
+    static_assert(std::is_same_v<pop_front_t<typelist<char>>, typelist<>>);
+    static_assert(std::is_same_v<pop_front_t<typelist<double, char>>, typelist<char>>);
+
+    // pop_back_t
+
+    template <typename TL>
+    using pop_back_t = detail::pop_back_type<static_cast<std::ptrdiff_t>(length_v<TL>) - 1, typelist<>, TL>::type;
+
+    static_assert(std::is_same_v<pop_back_t<typelist<>>, typelist<>>);
+    static_assert(std::is_same_v<pop_back_t<typelist<double>>, typelist<>>);
+    static_assert(std::is_same_v<pop_back_t<typelist<double, char>>, typelist<double>>);
+    static_assert(std::is_same_v<pop_back_t<typelist<double, char, int>>, typelist<double, char>>);
+
+    // at_t
+
+    template <std::size_t I, typename TL>
+    using at_t = detail::at_type<I, 0, TL>::type;
+
+    static_assert(std::is_same_v<at_t<0, typelist<>>, empty_type>);
+    static_assert(std::is_same_v<at_t<0, typelist<int>>, int>);
+    static_assert(std::is_same_v<at_t<0, typelist<int, char>>, int>);
+
+    static_assert(std::is_same_v<at_t<1, typelist<>>, empty_type>);
+    static_assert(std::is_same_v<at_t<1, typelist<int>>, empty_type>);
+    static_assert(std::is_same_v<at_t<1, typelist<int, char>>, char>);
+
+    static_assert(std::is_same_v<at_t<2, typelist<>>, empty_type>);
+    static_assert(std::is_same_v<at_t<2, typelist<int>>, empty_type>);
+    static_assert(std::is_same_v<at_t<2, typelist<int, char>>, empty_type>);
+} // namespace typelists
 
 int
 main()
@@ -1429,5 +1849,109 @@ main()
 
         std::println("{}", sum(1, 2)); // 3
         std::println("{}", twice(2));  // 4
+    }
+
+    {
+        using namespace crtp;
+
+        std::cout << "\n=== Curiously Recurring Template Pattern (CRTP) ===\n" << std::endl;
+
+        Derived d;
+        process(d); // Derived::f()
+    }
+
+    {
+        using namespace limited_number;
+
+        std::cout << "\n=== CRTP - Limited Numbers ===\n" << std::endl;
+
+        // excalibur
+
+        try
+        {
+            excalibur e1;
+            excalibur e2;                 // will throw an exception
+        }
+        catch (std::exception &e)
+        {
+            std::println("{}", e.what()); // Too many instances
+        }
+
+        // book of magic
+
+        try
+        {
+            book_of_magic b1;
+            book_of_magic b2;
+            book_of_magic b3;
+            book_of_magic b4;             // will throw an exception
+        }
+        catch (std::exception &e)
+        {
+            std::println("{}", e.what()); // Too many instances
+        }
+    }
+
+    {
+        using namespace composite_pattern;
+
+        std::cout << "\n=== Composite Pattern ===\n" << std::endl;
+
+        // Implementing the composite design pattern
+
+        // Composite pattern enables to compose objects into larger structures and treat both
+        // individual objects and compositions uniformly.
+
+        hero hero1("Arthur");
+        hero hero2("Sir Lancelot");
+
+        hero_party party1;
+        party1.emplace_back("Bors");
+
+        hero_party party2;
+        party2.emplace_back("Cador");
+        party2.emplace_back("Constantine");
+
+        // All combinations possible; treating heros and hero_parties the same!
+        hero1.ally_with(hero2);
+        hero1.ally_with(party1);
+        party1.ally_with(hero2);
+        party1.ally_with(party2);
+
+        std::cout << hero1;  // Arthur       -> [Bors]
+                             // Arthur       -> [Sir Lancelot]
+
+        std::cout << hero2;  // Sir Lancelot -> [Bors]
+                             // Sir Lancelot -> [Arthur]
+
+        std::cout << party1; // Bors         -> [Cador]
+                             // Bors         -> [Constantine]
+                             // Bors         -> [Arthur]
+                             // Bors         -> [Sir Lancelot]
+
+        std::cout << party2; // Cador        -> [Bors]
+                             // Constatine   -> [Bors]
+    }
+
+    {
+        using namespace enable_shared_from_this_crtp;
+
+        std::cout << "\n=== Enable Shared from `this` ===" << std::endl;
+
+        building *b = new building();
+
+        std::shared_ptr<building> p1{b};
+
+        // std::shared_ptr<building> p2{b}; // still not OK
+
+        // Member function shared_from_this creates more std::shared_ptr instances from an object,
+        // which all refer to the same instance of the object
+        std::shared_ptr<building> p2{b->shared_from_this()}; // OK
+    }
+
+    {
+        using namespace typelists;
+
+        std::cout << "\n=== Typelists ===\n" << std::endl;
     }
 }
